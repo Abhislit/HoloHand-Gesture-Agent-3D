@@ -4,7 +4,7 @@ import { MODELS } from './models/index.js';
 import { HandTracker } from './handTracking.js';
 import { GestureEngine, HAND_CONNECTIONS } from './gestureEngine.js';
 import { clamp } from './utils.js';
-import { Portal, CircleDetector } from './portal.js';
+import { Portal, CircleDetector } from './strange.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
