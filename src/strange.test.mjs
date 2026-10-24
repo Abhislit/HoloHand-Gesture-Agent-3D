@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { CircleDetector, Portal } from './strange.js';
+import { CircleDetector, Portal, TwistDetector } from './strange.js';
 
 // a hand drawing a full circle around (200,200) must fire once
 const d = new CircleDetector();
@@ -50,5 +50,46 @@ portal.stop();
 assert.equal(portal.preview, 0, 'stop clears the preview');
 for (let i = 0; i < 20; i++) portal.update(1 / 60);
 assert.ok(Math.abs(portal.cx - 100) < 1 && Math.abs(portal.cy - 100) < 1, 'centre tracks the hand');
+
+// wrist tilt is clamped and eased, and hand size drives the ring radius
+portal.tiltTo(9);
+assert.equal(portal.tiltT, 1, 'tilt clamps to +1');
+portal.sizeTo(9999);
+assert.equal(portal.Rt, Math.min(portal.W, portal.H) * 0.46, 'radius clamps to the max');
+for (let i = 0; i < 60; i++) portal.update(1 / 60);
+assert.ok(portal.tilt > 0.99 && portal.tilt <= 1, 'tilt eases toward its clamp');
+
+// a wrist rolled 150 degrees in place must fire exactly once
+const tw = new TwistDetector();
+const hits = [];
+for (let i = 0; i < 40; i++) {
+  const h = tw.push(0.08, { x: 200, y: 200 }, i / 60);
+  if (h) hits.push(h);
+}
+assert.equal(hits.length, 1, `one in-place twist, got ${hits.length}`);
+assert.equal(hits[0].dir, 1, 'roll direction is preserved');
+
+// the opposite roll fires with the opposite sign
+const twNeg = new TwistDetector();
+let neg = null;
+for (let i = 0; i < 40 && !neg; i++) neg = twNeg.push(-0.08, { x: 200, y: 200 }, i / 60);
+assert.ok(neg && neg.dir === -1, 'counter-roll fires negative');
+
+// the same roll while the palm slides away must not fire
+const twDrift = new TwistDetector();
+let drifted = null;
+for (let i = 0; i < 40 && !drifted; i++) {
+  drifted = twDrift.push(0.08, { x: 200 + i * 6, y: 200 }, i / 60);
+}
+assert.equal(drifted, null, 'rolling while the hand travels must not open');
+
+// the sigil preview grows with the roll and clamps at 1
+const tp = new TwistDetector();
+assert.equal(tp.progress(), 0, 'no roll yet');
+for (let i = 0; i < 10; i++) tp.push(0.1, { x: 200, y: 200 }, i / 60);
+const pRoll = tp.progress();
+assert.ok(pRoll > 0 && pRoll < 1, `partial roll should be partial, got ${pRoll}`);
+tp.sum = 5;
+assert.equal(tp.progress(), 1, 'progress clamps at 1');
 
 console.log('strange ok');

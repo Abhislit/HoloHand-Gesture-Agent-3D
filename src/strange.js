@@ -61,6 +61,46 @@ export class CircleDetector {
   }
 }
 
+// Sling-ring twist: the wrist rolls in place to open the portal.
+// Drift keeps re-anchoring, so swinging the whole arm never counts as a twist.
+export class TwistDetector {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.sum = 0;
+    this.anchor = null;
+    this.active = 0;
+    this.cool = 0;
+  }
+  /** roll: per-frame wrist roll (rad), palm: viewport px, t: seconds */
+  push(roll, palm, t) {
+    if (t < this.cool) return null;
+    if (!this.anchor && palm) this.anchor = { x: palm.x, y: palm.y };
+    const drift = this.anchor && palm ? Math.hypot(palm.x - this.anchor.x, palm.y - this.anchor.y) : 0;
+    if (drift > 48) {
+      this.sum = 0;
+      this.anchor = palm ? { x: palm.x, y: palm.y } : null;
+      return null;
+    }
+    if (Math.abs(roll) > 0.01) this.active = t;
+    else if (t - this.active > 0.5) this.sum *= 0.9; // stalled: fade the sigil out
+    if (Math.abs(this.sum) < 0.015) this.sum = 0;
+    this.sum += roll;
+    if (Math.abs(this.sum) >= 2.6) {
+      const dir = Math.sign(this.sum);
+      this.reset();
+      this.cool = t + 1.2;
+      return { dir };
+    }
+    return null;
+  }
+  /** 0..1 how far the wrist has rolled, for the sigil on the hand */
+  progress() {
+    return clamp(Math.abs(this.sum) / 2.6, 0, 1);
+  }
+}
+
 export class Portal {
   constructor(canvas) {
     this.canvas = canvas;
@@ -73,7 +113,10 @@ export class Portal {
     this.tx = 0; // centre the ring eases toward (the hand)
     this.ty = 0;
     this.preview = 0; // 0..1 ring forming under the hand while it circles
-    this.R = 0; // target radius
+    this.R = 0; // target radius (eased toward Rt)
+    this.Rt = 0;
+    this.tilt = 0; // ring tilt, radians, eased toward tiltT
+    this.tiltT = 0;
     this.k = 0; // 0 closed .. 1 fully open (eased)
     this.want = 0; // 1 opening, 0 closing
     this.rot = 0;
@@ -100,7 +143,8 @@ export class Portal {
     this.tx = x;
     this.ty = y;
     this.preview = 0;
-    this.R = clamp(Math.max(r * 2.2, minSide * 0.3), minSide * 0.28, minSide * 0.46);
+    this.Rt = clamp(r > 0 ? r : minSide * 0.3, minSide * 0.16, minSide * 0.46);
+    this.R = this.Rt;
     this.want = 1;
     this.burst(x, y, this.R * 0.6, 90);
   }
@@ -111,17 +155,27 @@ export class Portal {
   toggle(x, y, r) {
     this.isOpen ? this.close() : this.open(x, y, r);
   }
-  /** keep the ring centred on the hand */
-  follow(x, y) {
+  /** keep the ring centred on the hand; r > 0 also tracks the hand's size */
+  follow(x, y, r) {
     this.tx = x;
     this.ty = y;
     this.preview = 0;
+    if (r > 0) this.sizeTo(r);
   }
   /** show the ring forming under the hand; p is 0..1 sweep progress */
-  aim(x, y, p) {
+  aim(x, y, p, r) {
     this.tx = x;
     this.ty = y;
     this.preview = p;
+    if (r > 0) this.sizeTo(r);
+  }
+  /** tilt the ring with the wrist, radians */
+  tiltTo(a) {
+    this.tiltT = clamp(a, -1, 1);
+  }
+  sizeTo(r) {
+    const minSide = Math.min(this.W, this.H);
+    this.Rt = clamp(r, minSide * 0.16, minSide * 0.46);
   }
   stop() {
     this.preview = 0;
@@ -148,6 +202,8 @@ export class Portal {
     const follow = Math.min(1, dt * 14);
     this.cx += (this.tx - this.cx) * follow;
     this.cy += (this.ty - this.cy) * follow;
+    this.R += (this.Rt - this.R) * follow;
+    this.tilt += (this.tiltT - this.tilt) * follow;
     const speed = this.want ? 2.1 : 3.2;
     this.k = clamp(this.k + (this.want ? 1 : -1) * dt * speed, 0, 1);
     this.rot += dt * (0.9 + this.k * 0.6);
@@ -194,6 +250,12 @@ export class Portal {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
     if (!this.visible) return;
+
+    // tilt the whole mark with the wrist; sparks stay in world space
+    ctx.save();
+    ctx.translate(this.cx, this.cy);
+    ctx.rotate(this.tilt);
+    ctx.translate(-this.cx, -this.cy);
 
     // live mark under the hand while the circle is being drawn
     if (this.preview > 0.01 && this.k < 0.5) {
@@ -278,6 +340,8 @@ export class Portal {
       this.poly(3, r * 0.5, -this.rot * 0.8);
       ctx.restore();
     }
+
+    ctx.restore(); // end tilt
 
     // sparks
     ctx.save();

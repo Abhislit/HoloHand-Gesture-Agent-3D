@@ -39,7 +39,7 @@ function point(e) {
   const hit = circle.push(x, y, t);
   if (hit) {
     circle.reset();
-    portal.toggle(hit.x, hit.y, hit.r);
+    portal.toggle(hit.x, hit.y, hit.r * 2);
   }
 }
 canvas.addEventListener('pointerdown', (e) => {

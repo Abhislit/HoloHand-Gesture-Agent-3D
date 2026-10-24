@@ -139,6 +139,7 @@ export class GestureEngine {
       openness: st.open,
       pinching: st.pinching,
       rollDelta,
+      roll: rawRoll,
     };
     return st.last;
   }

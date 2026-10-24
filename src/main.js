@@ -4,7 +4,7 @@ import { MODELS } from './models/index.js';
 import { HandTracker } from './handTracking.js';
 import { GestureEngine, HAND_CONNECTIONS } from './gestureEngine.js';
 import { clamp } from './utils.js';
-import { Portal, CircleDetector } from './strange.js';
+import { Portal, TwistDetector } from './strange.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -12,7 +12,7 @@ const fxCanvas = $('fx');
 const ctx = fxCanvas.getContext('2d');
 const banner = $('banner');
 const portal = new Portal($('portal'));
-const circle = new CircleDetector();
+const twist = new TwistDetector();
 
 let W = innerWidth, H = innerHeight, DPR = 1;
 function sizeFx() {
@@ -228,7 +228,7 @@ function control(t, dt) {
     endGrab();
     scene.setHover(-1);
     prevPalm.clear();
-    circle.reset();
+    twist.reset();
     portal.stop();
     setActive('TWO');
     return;
@@ -241,7 +241,7 @@ function control(t, dt) {
     scene.holdVel = draggingMouse;
     if (!draggingMouse) scene.setHover(-1);
     prevPalm.clear();
-    circle.reset();
+    twist.reset();
     portal.stop();
     fistT = 0;
     setActive('');
@@ -253,25 +253,26 @@ function control(t, dt) {
   const g = h.gesture;
   const palmPx = { x: h.palm.x * W, y: h.palm.y * H };
 
-  // --- Dr. Strange portal: draw a circle with an open hand to open it, hold a fist to close it
+  // --- Dr. Strange portal: twist the wrist in place to open it, hold a fist to close it
+  // the mark lives on the palm, so it follows and scales with the hand
+  const handR = Math.hypot((h.tip.x - h.palm.x) * W, (h.tip.y - h.palm.y) * H) * 1.35;
   if (g === 'OPEN' || g === 'NONE') {
-    const pv = prevPalm.get(h.id);
-    if (pv && Math.hypot(palmPx.x - pv.x, palmPx.y - pv.y) > 8) portal.emit(palmPx.x, palmPx.y, 2, 120); // spell trail
-    const hit = circle.push(palmPx.x, palmPx.y, t);
-    // ring follows the hand: full open ring tracks the palm, otherwise a partial arc grows as it circles
-    if (portal.isOpen) portal.follow(palmPx.x, palmPx.y);
-    else portal.aim(palmPx.x, palmPx.y, circle.progress());
+    const hit = twist.push(h.rollDelta || 0, palmPx, t);
+    if (twist.progress() > 0.02) portal.emit(palmPx.x, palmPx.y, 2, 120); // spell trail
     if (hit && t > portalCool) {
       portalCool = t + 1.5;
-      circle.reset();
-      portal.toggle(hit.x, hit.y, hit.r);
+      twist.reset();
+      portal.toggle(palmPx.x, palmPx.y, handR);
       toast(portal.isOpen ? 'Portal opened' : 'Portal closed');
-    }
+    } else if (portal.isOpen) portal.follow(palmPx.x, palmPx.y, handR);
+    else portal.aim(palmPx.x, palmPx.y, twist.progress(), handR);
+    portal.tiltTo(h.roll || 0);
   } else {
-    circle.reset();
+    twist.reset();
     portal.stop();
   }
   if (g === 'FIST' && portal.isOpen) {
+    portal.follow(palmPx.x, palmPx.y, handR); // stays on the hand while it closes
     fistT += dt;
     if (fistT > 0.8 && t > portalCool) {
       portalCool = t + 1.5;
@@ -446,6 +447,24 @@ function drawRing(h) {
       ctx.lineWidth = 4.5;
       ctx.beginPath();
       ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * e);
+      ctx.stroke();
+    }
+    // sigil = how far the wrist has been twisted
+    const tp = twist.progress();
+    if (tp > 0.02) {
+      ctx.shadowColor = 'rgba(242, 201, 76, 1)';
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = 'rgba(242, 201, 76, 0.45)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 9]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.72, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#f2c94c';
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.86, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * tp);
       ctx.stroke();
     }
   }
