@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dr. Strange Portal</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #070403; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+  p { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      margin: 0; color: #ffb35c; font: 14px/1.4 system-ui, sans-serif;
+      opacity: .8; user-select: none; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="portal"></canvas>
+<p>Draw a circle with the mouse (or a finger) · P = toggle portal</p>
+
+<script type="module">
+import { Portal, CircleDetector } from '/src/strange.js';
+
+const canvas = document.getElementById('portal');
+const portal = new Portal(canvas);
+const circle = new CircleDetector();
+
+let W, H, DPR;
+function resize() {
+  W = innerWidth; H = innerHeight;
+  DPR = Math.min(devicePixelRatio || 1, 2);
+  portal.resize(W, H, DPR);
+}
+resize();
+addEventListener('resize', resize);
+
+let drawing = false;
+function point(e) {
+  const x = e.clientX, y = e.clientY, t = performance.now() / 1000;
+  portal.emit(x, y, 2, 120);
+  const hit = circle.push(x, y, t);
+  if (hit) {
+    circle.reset();
+    portal.toggle(hit.x, hit.y, hit.r);
+  }
+}
+canvas.addEventListener('pointerdown', (e) => {
+  drawing = true;
+  canvas.setPointerCapture(e.pointerId);
+  circle.reset();
+  point(e);
+});
+canvas.addEventListener('pointermove', (e) => { if (drawing) point(e); });
+canvas.addEventListener('pointerup', () => { drawing = false; circle.reset(); });
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'p') portal.toggle(W / 2, H / 2, 0);
+});
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  portal.update(dt);
+  portal.draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
