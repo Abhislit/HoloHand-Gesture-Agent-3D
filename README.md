@@ -37,10 +37,11 @@ Human Brain (4 lobes, cerebellum, brainstem, corpus callosum, thalamus, hippocam
 | Pinch while over a part | Grab it, drag it out, release to snap it back |
 | Two hands | Move them apart or together to zoom |
 | Peace sign (hold ~0.3 s) | Jump to the next model |
+| Draw a circle in the air with an open hand (Dr. Strange) | Opens a sparking portal behind the model. Draw another circle, or hold a fist ~0.8 s, to close it |
 
 ## Mouse and keyboard
 
-Drag = rotate · scroll = zoom · click a part = inspect it · `Space` = explode / assemble · `←` `→` or `1`–`4` = switch model · `R` = reset view.
+Drag = rotate · scroll = zoom · click a part = inspect it · `Space` = explode / assemble · `←` `→` or `1`–`4` = switch model · `R` = reset view · `P` = toggle the portal.
 Sliders in the left panel control the explosion and its intensity. The top-right buttons toggle camera background, hand skeleton, labels and fullscreen.
 
 ## Tips
@@ -54,6 +55,7 @@ Sliders in the left panel control the explosion and its intensity. The top-right
 src/main.js          app loop, hand overlay, gesture -> action, labels, UI
 src/handTracking.js  MediaPipe wrapper (2 hands, local files then CDN, GPU then CPU)
 src/gestureEngine.js landmarks -> gesture, openness, smoothed palm / fingertip / pinch, wrist roll
+src/portal.js        Dr. Strange portal: circle-gesture detector + spark ring renderer (own canvas behind the model)
 src/scene.js         Three.js point-cloud renderer: explode, scatter transition, picking, part dragging
 src/models/          shapes.js (point sampling) + jet / radial / car / brain definitions
 ```

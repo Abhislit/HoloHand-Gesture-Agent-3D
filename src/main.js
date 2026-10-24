@@ -4,12 +4,15 @@ import { MODELS } from './models/index.js';
 import { HandTracker } from './handTracking.js';
 import { GestureEngine, HAND_CONNECTIONS } from './gestureEngine.js';
 import { clamp } from './utils.js';
+import { Portal, CircleDetector } from './portal.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 const fxCanvas = $('fx');
 const ctx = fxCanvas.getContext('2d');
 const banner = $('banner');
+const portal = new Portal($('portal'));
+const circle = new CircleDetector();
 
 let W = innerWidth, H = innerHeight, DPR = 1;
 function sizeFx() {
@@ -18,6 +21,7 @@ function sizeFx() {
   DPR = Math.min(devicePixelRatio || 1, 2);
   fxCanvas.width = W * DPR;
   fxCanvas.height = H * DPR;
+  portal.resize(W, H, DPR);
 }
 sizeFx();
 addEventListener('resize', sizeFx);
@@ -193,6 +197,8 @@ let grab = null;
 let lastHover = { i: -1, t: 0 };
 let dwell = { i: -1, t: 0 };
 let peaceCool = 0;
+let portalCool = 0;
+let fistT = 0;
 const prevPalm = new Map();
 let activeKey = '';
 
@@ -222,6 +228,7 @@ function control(t, dt) {
     endGrab();
     scene.setHover(-1);
     prevPalm.clear();
+    circle.reset();
     setActive('TWO');
     return;
   }
@@ -233,6 +240,8 @@ function control(t, dt) {
     scene.holdVel = draggingMouse;
     if (!draggingMouse) scene.setHover(-1);
     prevPalm.clear();
+    circle.reset();
+    fistT = 0;
     setActive('');
     return;
   }
@@ -241,6 +250,27 @@ function control(t, dt) {
   scene.idle = 0;
   const g = h.gesture;
   const palmPx = { x: h.palm.x * W, y: h.palm.y * H };
+
+  // --- Dr. Strange portal: draw a circle with an open hand to open it, hold a fist to close it
+  if (g === 'OPEN' || g === 'NONE') {
+    const pv = prevPalm.get(h.id);
+    if (pv && Math.hypot(palmPx.x - pv.x, palmPx.y - pv.y) > 8) portal.emit(palmPx.x, palmPx.y, 2, 120); // spell trail
+    const hit = circle.push(palmPx.x, palmPx.y, t);
+    if (hit && t > portalCool) {
+      portalCool = t + 1.5;
+      circle.reset();
+      portal.toggle(hit.x, hit.y, hit.r);
+      toast(portal.isOpen ? 'Portal opened' : 'Portal closed');
+    }
+  } else circle.reset();
+  if (g === 'FIST' && portal.isOpen) {
+    fistT += dt;
+    if (fistT > 0.8 && t > portalCool) {
+      portalCool = t + 1.5;
+      portal.close();
+      toast('Portal closed');
+    }
+  } else fistT = 0;
 
   if (g === 'OPEN' || g === 'FIST' || g === 'NONE') {
     // openness drives the explosion
@@ -333,6 +363,7 @@ addEventListener('keydown', (e) => {
   } else if (e.key === 'ArrowRight') scene.next(1);
   else if (e.key === 'ArrowLeft') scene.next(-1);
   else if (e.key.toLowerCase() === 'r') scene.resetView();
+  else if (e.key.toLowerCase() === 'p') portal.toggle(W / 2, H / 2, 0);
   else if (e.key >= '1' && e.key <= String(MODELS.length)) scene.setModel(+e.key - 1);
 });
 
@@ -510,6 +541,8 @@ function frame(now) {
   $('b-explode').textContent = scene.explodeTarget > 0.5 ? 'Assemble' : 'Explode';
 
   scene.update(dt, t);
+  portal.update(dt);
+  portal.draw();
   drawOverlay();
   requestAnimationFrame(frame);
 }
