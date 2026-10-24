@@ -229,6 +229,7 @@ function control(t, dt) {
     scene.setHover(-1);
     prevPalm.clear();
     circle.reset();
+    portal.stop();
     setActive('TWO');
     return;
   }
@@ -241,6 +242,7 @@ function control(t, dt) {
     if (!draggingMouse) scene.setHover(-1);
     prevPalm.clear();
     circle.reset();
+    portal.stop();
     fistT = 0;
     setActive('');
     return;
@@ -256,13 +258,19 @@ function control(t, dt) {
     const pv = prevPalm.get(h.id);
     if (pv && Math.hypot(palmPx.x - pv.x, palmPx.y - pv.y) > 8) portal.emit(palmPx.x, palmPx.y, 2, 120); // spell trail
     const hit = circle.push(palmPx.x, palmPx.y, t);
+    // ring follows the hand: full open ring tracks the palm, otherwise a partial arc grows as it circles
+    if (portal.isOpen) portal.follow(palmPx.x, palmPx.y);
+    else portal.aim(palmPx.x, palmPx.y, circle.progress());
     if (hit && t > portalCool) {
       portalCool = t + 1.5;
       circle.reset();
       portal.toggle(hit.x, hit.y, hit.r);
       toast(portal.isOpen ? 'Portal opened' : 'Portal closed');
     }
-  } else circle.reset();
+  } else {
+    circle.reset();
+    portal.stop();
+  }
   if (g === 'FIST' && portal.isOpen) {
     fistT += dt;
     if (fistT > 0.8 && t > portalCool) {

@@ -20,9 +20,10 @@ export class CircleDetector {
     while (this.pts.length && t - this.pts[0].t > 1.6) this.pts.shift();
     return this.check();
   }
-  check() {
+  /** centroid, radius stats and unwrapped sweep of the current palm path */
+  measure() {
     const p = this.pts;
-    if (p.length < 12) return null;
+    if (p.length < 6) return null;
     let cx = 0, cy = 0;
     for (const q of p) {
       cx += q.x;
@@ -32,10 +33,7 @@ export class CircleDetector {
     cy /= p.length;
     const rs = p.map((q) => Math.hypot(q.x - cx, q.y - cy));
     const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
-    if (mean < 42) return null;
     const sd = Math.sqrt(rs.reduce((a, r) => a + (r - mean) ** 2, 0) / rs.length);
-    if (sd / mean > 0.42) return null; // not round enough
-    // unwrapped angle swept around the centre
     let total = 0;
     let prev = Math.atan2(p[0].y - cy, p[0].x - cx);
     for (let i = 1; i < p.length; i++) {
@@ -46,8 +44,20 @@ export class CircleDetector {
       total += d;
       prev = a;
     }
-    if (Math.abs(total) < 5.0) return null; // ~290 degrees
-    return { x: cx, y: cy, r: mean };
+    return { cx, cy, mean, sd, total };
+  }
+  /** 0..1 how far the hand has swept round the circle, for the live preview */
+  progress() {
+    const m = this.measure();
+    return m ? clamp(Math.abs(m.total) / 5, 0, 1) : 0;
+  }
+  check() {
+    const m = this.measure();
+    if (!m || this.pts.length < 12) return null;
+    if (m.mean < 42) return null;
+    if (m.sd / m.mean > 0.42) return null; // not round enough
+    if (Math.abs(m.total) < 5.0) return null; // ~290 degrees
+    return { x: m.cx, y: m.cy, r: m.mean };
   }
 }
 
@@ -60,6 +70,9 @@ export class Portal {
     this.DPR = 1;
     this.cx = 0;
     this.cy = 0;
+    this.tx = 0; // centre the ring eases toward (the hand)
+    this.ty = 0;
+    this.preview = 0; // 0..1 ring forming under the hand while it circles
     this.R = 0; // target radius
     this.k = 0; // 0 closed .. 1 fully open (eased)
     this.want = 0; // 1 opening, 0 closing
@@ -71,7 +84,7 @@ export class Portal {
     return this.want === 1;
   }
   get visible() {
-    return this.k > 0.002 || this.sparks.length > 0;
+    return this.k > 0.002 || this.sparks.length > 0 || this.preview > 0.01;
   }
   resize(W, H, DPR) {
     this.W = W;
@@ -84,6 +97,9 @@ export class Portal {
     const minSide = Math.min(this.W, this.H);
     this.cx = x;
     this.cy = y;
+    this.tx = x;
+    this.ty = y;
+    this.preview = 0;
     this.R = clamp(Math.max(r * 2.2, minSide * 0.3), minSide * 0.28, minSide * 0.46);
     this.want = 1;
     this.burst(x, y, this.R * 0.6, 90);
@@ -94,6 +110,21 @@ export class Portal {
   }
   toggle(x, y, r) {
     this.isOpen ? this.close() : this.open(x, y, r);
+  }
+  /** keep the ring centred on the hand */
+  follow(x, y) {
+    this.tx = x;
+    this.ty = y;
+    this.preview = 0;
+  }
+  /** show the ring forming under the hand; p is 0..1 sweep progress */
+  aim(x, y, p) {
+    this.tx = x;
+    this.ty = y;
+    this.preview = p;
+  }
+  stop() {
+    this.preview = 0;
   }
 
   /** small spray of sparks, used for the spell trail and the opening burst */
@@ -114,6 +145,9 @@ export class Portal {
 
   update(dt) {
     this.time += dt;
+    const follow = Math.min(1, dt * 14);
+    this.cx += (this.tx - this.cx) * follow;
+    this.cy += (this.ty - this.cy) * follow;
     const speed = this.want ? 2.1 : 3.2;
     this.k = clamp(this.k + (this.want ? 1 : -1) * dt * speed, 0, 1);
     this.rot += dt * (0.9 + this.k * 0.6);
@@ -160,6 +194,28 @@ export class Portal {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
     if (!this.visible) return;
+
+    // live mark under the hand while the circle is being drawn
+    if (this.preview > 0.01 && this.k < 0.5) {
+      const rr = Math.min(this.W, this.H) * (0.1 + 0.08 * this.preview);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.25 + 0.55 * this.preview;
+      ctx.strokeStyle = 'rgba(255, 165, 45, 0.95)';
+      ctx.shadowColor = 'rgba(255, 140, 20, 1)';
+      ctx.shadowBlur = 18;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(this.cx, this.cy, rr, -Math.PI / 2, -Math.PI / 2 + TAU * this.preview);
+      ctx.stroke();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = 'rgba(255, 220, 150, 0.9)';
+      ctx.beginPath();
+      ctx.arc(this.cx, this.cy, 2.6, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
 
     if (this.k > 0.002) {
       const r = this.R * Math.max(0, this.ease(this.k));
