@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dr. Strange Portal – hand gesture</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #070403; color: #ffb35c;
+    font: 14px/1.4 system-ui, sans-serif; }
+  #video, .shade, #portal, #fx { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #video { object-fit: cover; transform: scaleX(-1); filter: brightness(0.72) saturate(0.85); display: none; }
+  body.feed #video { display: block; }
+  .shade { pointer-events: none;
+    background: radial-gradient(ellipse at 55% 50%, transparent 40%, rgba(0,0,0,0.5) 100%); }
+  #portal, #fx { pointer-events: none; }
+  #hint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    margin: 0; opacity: 0.85; user-select: none; pointer-events: none; text-align: center; }
+  #hint b { color: #ffd79a; }
+  #start { position: fixed; inset: 0; display: grid; place-items: center;
+    background: radial-gradient(900px 600px at 50% 40%, #221408 0%, #0a0605 70%); z-index: 5; }
+  #start.gone { display: none; }
+  .card { max-width: 340px; text-align: center; padding: 26px; border-radius: 18px;
+    background: rgba(20, 12, 8, 0.8); border: 1px solid rgba(255, 179, 92, 0.18); }
+  .card h1 { margin: 0 0 8px; font-size: 22px; color: #ffd79a; }
+  .card p { margin: 0 0 18px; color: #c9a17a; }
+  button { font: inherit; font-weight: 600; color: #1a0f05; cursor: pointer;
+    border: 0; border-radius: 10px; padding: 11px 20px;
+    background: linear-gradient(180deg, #ffcf7a, #f2a63c); }
+  #toast { position: fixed; top: 22px; left: 50%; transform: translateX(-50%) translateY(-8px);
+    padding: 8px 16px; border-radius: 999px; background: rgba(20, 12, 8, 0.9);
+    border: 1px solid rgba(255, 179, 92, 0.35); color: #ffd79a;
+    opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<div class="shade"></div>
+<canvas id="portal"></canvas>
+<canvas id="fx"></canvas>
+<p id="hint"><b>Make a peace sign ✌️</b> to open the portal · hold a fist to close it</p>
+<div id="toast"></div>
+
+<div id="start">
+  <div class="card">
+    <h1>Dr. Strange Portal</h1>
+    <p>Open a sling-ring portal with your bare hand. Your camera stays in the browser.</p>
+    <button id="btn-cam">Start camera</button>
+    <p id="status" style="margin: 14px 0 0; font-size: 12px;"></p>
+  </div>
+</div>
+
+<script type="module">
+import { HandTracker } from '/src/handTracking.js';
+import { GestureEngine, HAND_CONNECTIONS } from '/src/gestureEngine.js';
+import { Portal } from '/src/strange.js';
+import { clamp } from '/src/utils.js';
+
+const video = document.getElementById('video');
+const fx = document.getElementById('fx');
+const ctx = fx.getContext('2d');
+const portal = new Portal(document.getElementById('portal'));
+const tracker = new HandTracker();
+const engine = new GestureEngine();
+const status = document.getElementById('status');
+const hint = document.getElementById('hint');
+
+let W = innerWidth, H = innerHeight, DPR = 1;
+function resize() {
+  W = innerWidth; H = innerHeight;
+  DPR = Math.min(devicePixelRatio || 1, 1.5);
+  fx.width = W * DPR;
+  fx.height = H * DPR;
+  portal.resize(W, H, DPR);
+}
+resize();
+addEventListener('resize', resize);
+
+let toastTimer = 0;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1600);
+}
+
+function setStatus(text) { status.textContent = text; }
+
+/** raw camera landmark -> viewport 0..1 (mirrored, matches object-fit: cover) */
+function mapPoint(p) {
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const s = Math.max(W / vw, H / vh);
+  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  return { x: ((1 - p.x) * vw * s + ox) / W, y: (p.y * vh * s + oy) / H };
+}
+
+// ------------------------------------------------------------------ camera
+document.getElementById('btn-cam').onclick = async () => {
+  document.getElementById('start').classList.add('gone');
+  if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
+    setStatus('Camera needs http://localhost or https.');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    document.body.classList.add('feed');
+  } catch (e) {
+    console.warn(e);
+    setStatus(e && e.name === 'NotAllowedError'
+      ? 'Camera permission denied. Allow it and reload.'
+      : 'No camera found.');
+    return;
+  }
+  setStatus('Loading hand model…');
+  try {
+    await tracker.init();
+    setStatus('Hands on');
+  } catch (e) {
+    console.error(e);
+    setStatus('Hand model failed to load (needs internet once).');
+  }
+};
+
+// ------------------------------------------------------------------ gesture -> portal
+let perc = { hands: [] };
+let lastVideoTime = -1;
+let portalCool = 0;
+let fistT = 0;
+
+function control(t, dt) {
+  const live = perc.hands.filter((h) => !h.held);
+  if (live.length !== 1) { portal.stop(); fistT = 0; return; }
+
+  const h = live[0];
+  const palmPx = { x: h.palm.x * W, y: h.palm.y * H };
+  const handR = Math.hypot((h.tip.x - h.palm.x) * W, (h.tip.y - h.palm.y) * H) * 1.35;
+  const g = h.gesture;
+
+  if (g === 'FIST' && portal.isOpen) {
+    portal.follow(palmPx.x, palmPx.y, handR);
+    fistT += dt;
+    if (fistT > 0.8 && t > portalCool) {
+      portalCool = t + 1.5;
+      portal.close();
+      toast('Portal closed');
+    }
+  } else {
+    fistT = 0;
+    if (g === 'PEACE' && !portal.isOpen && t > portalCool) {
+      portalCool = t + 1.5;
+      portal.toggle(palmPx.x, palmPx.y, handR);
+      toast('Portal opened');
+    } else if (portal.isOpen) {
+      portal.follow(palmPx.x, palmPx.y, handR);
+    }
+  }
+  portal.tiltTo(h.roll || 0);
+}
+
+// ------------------------------------------------------------------ overlay
+function drawOverlay() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const live = perc.hands.filter((h) => !h.held);
+  for (const h of live) {
+    const pts = h.lm.map((p) => ({ x: p.x * W, y: p.y * H }));
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255, 224, 190, 0.78)';
+    ctx.beginPath();
+    for (const [a, b] of HAND_CONNECTIONS) {
+      ctx.moveTo(pts[a].x, pts[a].y);
+      ctx.lineTo(pts[b].x, pts[b].y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const len = Math.hypot((pts[0].x - pts[12].x) * W, (pts[0].y - pts[12].y) * H);
+    const r = len * 0.95 + 22;
+    const cx = h.palm.x * W, cy = h.palm.y * H;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(255, 179, 92, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 9]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.72, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  hint.style.opacity = portal.isOpen ? '0' : '0.85';
+}
+
+// ------------------------------------------------------------------ main loop
+let lastT = performance.now() / 1000;
+function frame(now) {
+  const t = now / 1000;
+  const dt = Math.min(0.05, Math.max(0.001, t - lastT));
+  lastT = t;
+
+  if (tracker.ready && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const hands = tracker.detect(video, now);
+    perc = engine.update(hands, t, mapPoint, (video.videoWidth || 16) / (video.videoHeight || 9));
+  }
+  control(t, dt);
+  portal.update(dt);
+  portal.draw();
+  drawOverlay();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'p') portal.toggle(W / 2, H / 2, 0);
+});
+</script>
+</body>
+</html>

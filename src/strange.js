@@ -130,6 +130,8 @@ export class Portal {
     return this.k > 0.002 || this.sparks.length > 0 || this.preview > 0.01;
   }
   resize(W, H, DPR) {
+    // cap portal resolution: fullscreen glow at DPR 2 costs ~3x for no visible gain
+    DPR = Math.min(DPR, 1.5);
     this.W = W;
     this.H = H;
     this.DPR = DPR;
@@ -264,8 +266,16 @@ export class Portal {
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = 0.25 + 0.55 * this.preview;
       ctx.strokeStyle = 'rgba(255, 165, 45, 0.95)';
-      ctx.shadowColor = 'rgba(255, 140, 20, 1)';
-      ctx.shadowBlur = 18;
+      // cheap glow: layered translucent strokes beat shadowBlur by ~15x
+      const base = ctx.globalAlpha;
+      for (const [w, al] of [[14, 0.06], [8, 0.1], [4.5, 0.18]]) {
+        ctx.globalAlpha = base * al;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.arc(this.cx, this.cy, rr, -Math.PI / 2, -Math.PI / 2 + TAU * this.preview);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = base;
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -298,17 +308,22 @@ export class Portal {
       ctx.globalCompositeOperation = 'lighter';
       ctx.lineCap = 'round';
 
-      // outer glow halo
-      ctx.shadowColor = 'rgba(255, 140, 20, 1)';
-      ctx.shadowBlur = 34;
+      // outer glow halo (layered strokes, no shadowBlur)
       ctx.strokeStyle = 'rgba(255, 150, 30, 0.95)';
+      for (const [w, al] of [[26, 0.05], [16, 0.09], [9, 0.16]]) {
+        ctx.globalAlpha = a * al;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.arc(this.cx, this.cy, r, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = a;
       ctx.lineWidth = 7;
       ctx.beginPath();
       ctx.arc(this.cx, this.cy, r, 0, TAU);
       ctx.stroke();
-      ctx.shadowBlur = 14;
-      ctx.strokeStyle = 'rgba(255, 230, 150, 0.95)';
       ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(255, 230, 150, 0.95)';
       ctx.beginPath();
       ctx.arc(this.cx, this.cy, r, 0, TAU);
       ctx.stroke();
@@ -319,7 +334,6 @@ export class Portal {
         { f: 0.78, w: 1.6, dash: [4, 10], dir: -1, sp: 1.6 },
         { f: 0.62, w: 2.4, dash: [60, 22, 6, 22], dir: 1, sp: 0.7 },
       ];
-      ctx.shadowBlur = 10;
       ctx.strokeStyle = 'rgba(255, 170, 60, 0.85)';
       for (const rg of rings) {
         ctx.lineWidth = rg.w;
