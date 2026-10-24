@@ -3,12 +3,16 @@ import { HoloScene } from './scene.js';
 import { MODELS } from './models/index.js';
 import { HandTracker } from './handTracking.js';
 import { GestureEngine, HAND_CONNECTIONS } from './gestureEngine.js';
+import { Portal } from './portal.js';
 import { clamp } from './utils.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 const fxCanvas = $('fx');
 const ctx = fxCanvas.getContext('2d');
+const portalCanvas = $('portal');
+const pctx = portalCanvas.getContext('2d');
+const portal = new Portal();
 const banner = $('banner');
 
 let W = innerWidth, H = innerHeight, DPR = 1;
@@ -18,6 +22,8 @@ function sizeFx() {
   DPR = Math.min(devicePixelRatio || 1, 2);
   fxCanvas.width = W * DPR;
   fxCanvas.height = H * DPR;
+  portalCanvas.width = W * DPR;
+  portalCanvas.height = H * DPR;
 }
 sizeFx();
 addEventListener('resize', sizeFx);
@@ -504,12 +510,17 @@ function frame(now) {
     perc = engine.update(hands, t, mapPoint, (video.videoWidth || 16) / (video.videoHeight || 9));
   }
   control(t, dt);
+  portal.update(perc.hands, dt);
+  if (portal.open > 0.5) setActive('PORTAL');
 
   if (!draggingExplode) rExplode.value = Math.round(clamp(scene.explode, 0, 1) * 100);
   $('v-explode').textContent = Math.round(clamp(scene.explode, 0, 1) * 100) + '%';
   $('b-explode').textContent = scene.explodeTarget > 0.5 ? 'Assemble' : 'Explode';
 
   scene.update(dt, t);
+  pctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  pctx.clearRect(0, 0, W, H);
+  portal.draw(pctx, t, W, H);
   drawOverlay();
   requestAnimationFrame(frame);
 }
